@@ -1,8 +1,4 @@
-"""Testes automatizados da Vallet API — mapeados 1:1 com CT-01 a CT-25 da documentação.
 
-Execução:  pytest --html=relatorio.html --self-contained-html
-Status na documentação:  PASSED = Passou · FAILED = Falhou · SKIPPED = Bloqueado
-"""
 import pytest
 
 from config import COORD, PLACA, payload_estacionamento, payload_veiculo
@@ -199,35 +195,25 @@ def test_ct17_listar_vagas_estacionamento(api, motorista, estacionamento):
         for campo in ("id", "estacionamentoId", "numero", "preco"):
          assert campo in vagas[0], f"campo ausente na vaga: {campo}"
 
-
-SEM_TOKEN = (401, 403)
-PLACA = "ABC1234"
-
 def _exigir_reserva(reserva_criada):
     if not reserva_criada or (hasattr(reserva_criada, "status_code") and reserva_criada.status_code not in (200, 201)):
         pytest.skip("Reserva necessária para o teste não foi criada.")
     return reserva_criada.json() if hasattr(reserva_criada, "json") else reserva_criada
 
-def payload_estacionamento(estacionamento_id, veiculo_id):
+def payload_reserva(estacionamento_id, veiculo_id):
     return {
         "estacionamentoId": estacionamento_id,
         "veiculoId": veiculo_id,
     }
 
-def test_ct18_criar_reserva(api, motorista, estacionamento, veiculo_criado):
-    if veiculo_criado.status_code not in (200, 201):
-        pytest.skip("Veículo necessário para reserva não foi criado.")
-    veiculo_id = veiculo_criado.json()["id"]
-    r = api.post(
-        "/reserva/criar",
-        token=motorista["token"],
-        json=payload_estacionamento(estacionamento["id"], veiculo_id),
-    )
-    assert r.status_code in (200, 201), r.text
+def test_ct18_criar_reserva(api, motorista, estacionamento, vaga_reserva, reserva_criada):
+    r = reserva_criada["resp"]
+    assert r.status_code == 201, r.text
     corpo = r.json()
-    assert corpo.get("id") or corpo.get("reservaId")
-    assert corpo.get("usuarioId") == motorista["uid"] or "usuarioId" in corpo
-    assert corpo.get("estacionamentoId") == estacionamento["id"]
+    assert corpo["status"] == "ativa"
+    assert corpo["valorTotal"] == round(corpo["valorHora"] * 1, 2)
+    vaga = _vaga_por_id(api, motorista["token"], estacionamento["id"], vaga_reserva["id"])
+    assert vaga is not None and vaga["disponivel"] is False, "vaga deveria ficar indisponível"
 
 def test_ct19_criar_reserva_vaga_ocupada(api, motorista, reserva_criada, estacionamento):
     reserva = _exigir_reserva(reserva_criada)
@@ -261,7 +247,7 @@ def test_ct20_criar_reserva_sem_token(api, estacionamento, veiculo_criado):
     veiculo_id = veiculo_criado.json()["id"] if veiculo_criado.status_code in (200, 201) else "fake_id"
     r = api.post(
         "/reserva/criar",
-        json=payload_estacionamento(estacionamento["id"], veiculo_id),
+        json=payload_reserva(estacionamento["id"], veiculo_id),
     )
     assert r.status_code in SEM_TOKEN, f"Esperado erro de autenticação, obtido: {r.status_code} {r.text}"
 
@@ -295,18 +281,32 @@ def test_ct23_listar_notificacoes(api, motorista):
         notificacoes = r.json()
         assert isinstance(notificacoes, (list, dict))
 
+def _form(campos):
+    """Força multipart/form-data mesmo sem arquivo."""
+    return {chave: (None, str(valor)) for chave, valor in campos.items()}
 
-def test_ct24_camera_placa_detectada_valida(api, admin, estacionamento, veiculo_criado):
-    if veiculo_criado.status_code not in (200, 201):
-        pytest.skip("Veículo de teste não disponível.")
+def test_ct24_camera_placa_detectada(api, motorista, estacionamento, vaga_extra):
     r = api.post(
         "/camera/placa-detectada",
-        token=admin["token"],
-        json={"estacionamentoId": estacionamento["id"], "placa": PLACA, "confianca": 0.98},
+        files=_form({
+            "id_estacionamento": estacionamento["id"],
+            "id_vaga": vaga_extra["id"],
+            "numero_vaga": vaga_extra["numero"],
+            "placa": PLACA,
+            "confianca": 0.95,
+            "notificar": "false",
+        }),
     )
-    assert r.status_code in (200, 201), r.text
+    assert r.status_code == 200, r.text
     corpo = r.json()
-    assert corpo is not None
+    assert corpo["status"] == "sucesso"
+    assert corpo["vaga"] == vaga_extra["numero"]
+    vaga = _vaga_por_id(api, motorista["token"], estacionamento["id"], vaga_extra["id"])
+    assert vaga["disponivel"] is False, (
+        "vaga detectada pela câmera continua 'disponivel' (a câmera grava 'ocupada', "
+        "mas reservas/dashboard usam 'disponivel')"
+    )
+
 
 
 def test_ct25_camera_placa_detectada_invalida(api, admin, estacionamento):
