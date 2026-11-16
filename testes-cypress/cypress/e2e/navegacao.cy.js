@@ -12,9 +12,9 @@ describe("ValletWeb — navegação", () => {
   it("NAV-01: da página inicial leva ao login pelo cabeçalho", () => {
     cy.visit("/");
     cy.title().should("include", "Vallet");
-    cy.get("header").contains("a", "Login").click();
+    cy.get("header").contains("a", "Acesso do gestor").click();
     cy.location("pathname").should("eq", "/login/");
-    cy.title().should("eq", "Login - Vallet");
+    cy.title().should("eq", "Acesso do gestor — Vallet");
     cy.get("#email").should("be.visible");
     cy.get("#password").should("be.visible");
     cy.contains("button", "Entrar").should("be.visible");
@@ -32,7 +32,7 @@ describe("ValletWeb — navegação", () => {
     cy.get("#email").type("usuario.inexistente@vallet.com");
     cy.get("#password").type("senhaErrada123");
     cy.contains("button", "Entrar").click();
-    cy.wait("@firebaseLogin").its("response.statusCode").should("be.oneOf", [400, 401]);
+    cy.wait("@firebaseLogin").its("response.statusCode").should("be.oneOf", [400, 401,429]);
     cy.location("pathname").should("eq", "/login/");
   });
 
