@@ -124,3 +124,131 @@ def test_ct10_listar_veiculos_usuario(api, motorista, veiculo_criado):
     assert any(v["placa"] == PLACA for v in veiculos)
     assert all(v["usuarioId"] == motorista["uid"] for v in veiculos)
 
+
+# ============================== VAGA / RESERVA / OUTROS ===================== #
+def test_ct17_listar_vagas_estacionamento(api, motorista, estacionamento):
+    r = api.get(f"/vaga/estacionamento/{estacionamento['id']}", token=motorista["token"])
+    assert r.status_code == 200, r.text
+    vagas = r.json()
+    assert isinstance(vagas, list)
+    if vagas:
+        for campo in ("id", "estacionamentoId", "numero", "preco"):
+         assert campo in vagas[0], f"campo ausente na vaga: {campo}"
+
+
+SEM_TOKEN = (401, 403)
+PLACA = "ABC1234"
+
+def _exigir_reserva(reserva_criada):
+    if not reserva_criada or (hasattr(reserva_criada, "status_code") and reserva_criada.status_code not in (200, 201)):
+        pytest.skip("Reserva necessária para o teste não foi criada.")
+    return reserva_criada.json() if hasattr(reserva_criada, "json") else reserva_criada
+
+def payload_estacionamento(estacionamento_id, veiculo_id):
+    return {
+        "estacionamentoId": estacionamento_id,
+        "veiculoId": veiculo_id,
+    }
+
+def test_ct18_criar_reserva(api, motorista, estacionamento, veiculo_criado):
+    if veiculo_criado.status_code not in (200, 201):
+        pytest.skip("Veículo necessário para reserva não foi criado.")
+    veiculo_id = veiculo_criado.json()["id"]
+    r = api.post(
+        "/reserva/criar",
+        token=motorista["token"],
+        json=payload_estacionamento(estacionamento["id"], veiculo_id),
+    )
+    assert r.status_code in (200, 201), r.text
+    corpo = r.json()
+    assert corpo.get("id") or corpo.get("reservaId")
+    assert corpo.get("usuarioId") == motorista["uid"] or "usuarioId" in corpo
+    assert corpo.get("estacionamentoId") == estacionamento["id"]
+
+def test_ct19_criar_reserva_vaga_ocupada(api, motorista, reserva_criada, estacionamento):
+    reserva = _exigir_reserva(reserva_criada)
+    vaga_id = "0JGDFRA6oRw2u7nHAeXx"
+    
+    estacionamento_id = (
+        reserva.get("estacionamentoId") 
+        or reserva.get("id_estacionamento") 
+        or estacionamento.get("id")
+    )
+    
+    payload = {
+        "estacionamentoId": estacionamento_id,
+        "vagaId": vaga_id
+    }
+    
+   
+    r = api.post(
+        "/reserva/criar",
+        token=motorista["token"],
+        json=payload,
+    )
+    
+    assert r.status_code in (400, 409, 422), r.text
+    msg = r.text.lower()
+    
+    termos_esperados = ["ocupada", "indisponível", "vagas", "disponível", "erro", "conflito", "já", "reservada", "ativa"]
+    assert any(termo in msg for termo in termos_esperados), f"Mensagem inesperada da API: {r.text}"
+
+def test_ct20_criar_reserva_sem_token(api, estacionamento, veiculo_criado):
+    veiculo_id = veiculo_criado.json()["id"] if veiculo_criado.status_code in (200, 201) else "fake_id"
+    r = api.post(
+        "/reserva/criar",
+        json=payload_estacionamento(estacionamento["id"], veiculo_id),
+    )
+    assert r.status_code in SEM_TOKEN, f"Esperado erro de autenticação, obtido: {r.status_code} {r.text}"
+
+
+def test_ct21_listar_reservas_usuario(api, motorista, reserva_criada):
+    _exigir_reserva(reserva_criada)
+    r = api.get("/reserva/", token=motorista["token"])
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    reservas = corpo.get("reservas", corpo) if isinstance(corpo, dict) else corpo
+    assert isinstance(reservas, list)
+
+
+def test_ct22_pagamento_pix(api, motorista, reserva_criada):
+    reserva = _exigir_reserva(reserva_criada)
+    reserva_id = reserva.get("id") or reserva.get("reservaId")
+    r = api.post(
+        "/pagamento/pix",
+        token=motorista["token"],
+        json={"reservaId": reserva_id, "valor": reserva.get("valor", 15.00)},
+    )
+    assert r.status_code in (200, 201, 501), r.text
+    if r.status_code == 501:
+        assert "pagamento" in r.json().get("detail", "").lower()
+
+
+def test_ct23_listar_notificacoes(api, motorista):
+    r = api.get("/notificacoes", token=motorista["token"])
+    assert r.status_code in (200, 404), r.text
+    if r.status_code == 200:
+        notificacoes = r.json()
+        assert isinstance(notificacoes, (list, dict))
+
+
+def test_ct24_camera_placa_detectada_valida(api, admin, estacionamento, veiculo_criado):
+    if veiculo_criado.status_code not in (200, 201):
+        pytest.skip("Veículo de teste não disponível.")
+    r = api.post(
+        "/camera/placa-detectada",
+        token=admin["token"],
+        json={"estacionamentoId": estacionamento["id"], "placa": PLACA, "confianca": 0.98},
+    )
+    assert r.status_code in (200, 201), r.text
+    corpo = r.json()
+    assert corpo is not None
+
+
+def test_ct25_camera_placa_detectada_invalida(api, admin, estacionamento):
+    r = api.post(
+        "/camera/placa-detectada",
+        token=admin["token"],
+        json={"estacionamentoId": estacionamento["id"], "placa": "INVALIDA999", "confianca": 0.30},
+    )
+    assert r.status_code in (400, 404, 422), r.text
