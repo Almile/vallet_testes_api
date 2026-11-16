@@ -124,3 +124,67 @@ def test_ct10_listar_veiculos_usuario(api, motorista, veiculo_criado):
     assert any(v["placa"] == PLACA for v in veiculos)
     assert all(v["usuarioId"] == motorista["uid"] for v in veiculos)
 
+# ============================ ESTACIONAMENTO ================================ #
+def test_ct11_estacionamentos_proximos(api, motorista, criacao_estacionamento):
+    r = api.get(
+        "/estacionamento/proximos",
+        token=motorista["token"],
+        params={**COORD, "raio_km": 10},
+    )
+    assert r.status_code == 200, r.text
+    lista = r.json()
+    assert isinstance(lista, list)
+    distancias = [e["distanciaKm"] for e in lista]
+    assert all(d <= 10 for d in distancias), "item fora do raio"
+    assert distancias == sorted(distancias), "lista não está ordenada por distância"
+    if criacao_estacionamento["criado"]:
+        assert any(e["id"] == criacao_estacionamento["id"] for e in lista)
+
+
+def test_ct12_proximos_latitude_invalida(api, motorista):
+    r = api.get(
+        "/estacionamento/proximos",
+        token=motorista["token"],
+        params={"latitude": 91, "longitude": -46.39},
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_ct13_criar_estacionamento_superadmin(admin, criacao_estacionamento):
+    r = criacao_estacionamento["resp"]
+    if r.status_code == 400 and "vinculado" in r.text:
+        pytest.skip("O admin de teste já possuía estacionamento; use um admin sem vínculo.")
+    assert r.status_code == 201, r.text
+    corpo = r.json()
+    assert corpo["id"]
+    assert corpo["adminUid"] == admin["uid"]
+    assert corpo["quantidadeVagasTotal"] == 2
+
+
+def test_ct14_criar_estacionamento_como_motorista(api, motorista, admin):
+    r = api.post(
+        "/estacionamento/criar_estacionamento",
+        token=motorista["token"],
+        json=payload_estacionamento(admin["uid"]),
+    )
+    assert r.status_code == 403, r.text
+
+
+def test_ct15_buscar_estacionamento_existente(api, superadmin, estacionamento):
+    r = api.get(
+        f"/estacionamento/buscar_estacionamento/{estacionamento['id']}",
+        token=superadmin["token"],
+    )
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["id"] == estacionamento["id"]
+    assert "etiquetaFuncionamento" in corpo
+
+
+def test_ct16_buscar_estacionamento_inexistente(api, superadmin):
+    r = api.get(
+        "/estacionamento/buscar_estacionamento/id_inexistente_999",
+        token=superadmin["token"],
+    )
+    assert r.status_code == 404, r.text
+    assert "não encontrado" in r.json()["detail"]
