@@ -1,11 +1,5 @@
-/// <reference types="cypress" />
+<reference types="cypress" />
 
-// Spec auxiliar de evidências. Fica fora de cypress/e2e para não fazer parte
-// da suíte de regressão padrão.
-// Execução:
-//   npm run cy:evidencias
-// ou:
-//   npx cypress run --config-file cypress.evidencias.config.js
 describe("Evidências Visuais", () => {
   it("captura a página inicial", () => {
     cy.visit("/");
